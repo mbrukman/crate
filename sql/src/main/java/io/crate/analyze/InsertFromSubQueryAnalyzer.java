@@ -22,25 +22,52 @@
 package io.crate.analyze;
 
 import com.google.common.collect.Iterators;
-import io.crate.analyze.relations.QueriedRelation;
-import io.crate.analyze.relations.RelationAnalyzer;
+import io.crate.analyze.expressions.ExpressionAnalysisContext;
+import io.crate.analyze.expressions.ExpressionAnalyzer;
+import io.crate.analyze.relations.*;
 import io.crate.exceptions.UnsupportedFeatureException;
 import io.crate.metadata.TableIdent;
 import io.crate.metadata.table.TableInfo;
-import io.crate.planner.symbol.Reference;
-import io.crate.planner.symbol.Symbol;
-import io.crate.planner.symbol.Symbols;
+import io.crate.planner.symbol.*;
+import io.crate.sql.tree.Assignment;
 import io.crate.sql.tree.InsertFromSubquery;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Singleton;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 @Singleton
 public class InsertFromSubQueryAnalyzer extends AbstractInsertAnalyzer {
 
-
     private final RelationAnalyzer relationAnalyzer;
+
+    private static class ValuesResolver implements ValuesAwareExpressionAnalyzer.ValuesResolver {
+
+        private final TableRelation targetTableRelation;
+        private final List<Reference> targetColumns;
+        private final List<String> assignmentColumns = new ArrayList<>();
+
+        public ValuesResolver(TableRelation targetTableRelation, List<Reference> targetColumns) {
+            this.targetTableRelation = targetTableRelation;
+            this.targetColumns = targetColumns;
+        }
+
+        @Override
+        public Symbol allocateAndResolve(Field argumentColumn) {
+            Reference reference = targetTableRelation.resolveField(argumentColumn);
+            int i = targetColumns.indexOf(reference);
+            if (i < 0) {
+                throw new IllegalArgumentException(SymbolFormatter.format(
+                        "Column '%s' that is used in the VALUES() expression is not part of the target column list",
+                        argumentColumn));
+            }
+            assert reference != null;
+            assignmentColumns.add(reference.ident().columnIdent().fqn());
+            return new InputColumn(i, argumentColumn.valueType());
+        }
+    }
 
     @Inject
     protected InsertFromSubQueryAnalyzer(AnalysisMetaData analysisMetaData, RelationAnalyzer relationAnalyzer) {
@@ -50,11 +77,7 @@ public class InsertFromSubQueryAnalyzer extends AbstractInsertAnalyzer {
 
     @Override
     public AbstractInsertAnalyzedStatement visitInsertFromSubquery(InsertFromSubquery node, Analysis context) {
-        if (!node.onDuplicateKeyAssignments().isEmpty()) {
-            throw new UnsupportedOperationException("ON DUPLICATE KEY UPDATE clause is not supported");
-        }
         TableInfo tableInfo = analysisMetaData.referenceInfos().getTableInfoUnsafe(TableIdent.of(node.table()));
-
 
         QueriedRelation source = (QueriedRelation) relationAnalyzer.analyze(node.subQuery(), context);
         InsertFromSubQueryAnalyzedStatement insertStatement =
@@ -72,6 +95,37 @@ public class InsertFromSubQueryAnalyzer extends AbstractInsertAnalyzer {
         handleInsertColumns(node, maxInsertValues, insertStatement);
 
         validateMatchingColumns(insertStatement, source.querySpec());
+
+        if (!node.onDuplicateKeyAssignments().isEmpty()) {
+            ExpressionAnalysisContext expressionAnalysisContext = new ExpressionAnalysisContext();
+            TableRelation tableRelation = new TableRelation(tableInfo);
+            FieldProvider fieldProvider = new NameFieldProvider(tableRelation);
+            ExpressionAnalyzer expressionAnalyzer = new ExpressionAnalyzer(
+                    analysisMetaData, context.parameterContext(), fieldProvider);
+            expressionAnalyzer.resolveWritableFields(true);
+
+            ValuesResolver valuesResolver = new ValuesResolver(tableRelation, insertStatement.columns());
+            ValuesAwareExpressionAnalyzer valuesAwareExpressionAnalyzer = new ValuesAwareExpressionAnalyzer(
+                    analysisMetaData, context.parameterContext(), fieldProvider, valuesResolver);
+
+            Symbol[] onDupKeyAssignments = new Symbol[node.onDuplicateKeyAssignments().size()];
+            for (int i = 0; i < node.onDuplicateKeyAssignments().size(); i++) {
+                Assignment assignment = node.onDuplicateKeyAssignments().get(i);
+                Reference targetColumn = tableRelation.resolveField(
+                        (Field) expressionAnalyzer.convert(assignment.columnName(), expressionAnalysisContext));
+
+                Symbol assignmentExpression = expressionAnalyzer.normalizeInputForReference(
+                        valuesAwareExpressionAnalyzer.convert(assignment.expression(), expressionAnalysisContext),
+                        targetColumn,
+                        expressionAnalysisContext);
+                onDupKeyAssignments[i] = tableRelation.resolve(valuesAwareExpressionAnalyzer.normalize(assignmentExpression));
+            }
+            insertStatement.addOnDuplicateKeyAssignments(onDupKeyAssignments);
+            insertStatement.addOnDuplicateKeyAssignmentsColumns(
+                    valuesResolver.assignmentColumns.toArray(new String[valuesResolver.assignmentColumns.size()]));
+
+            //throw new UnsupportedOperationException("ON DUPLICATE KEY UPDATE clause is not supported");
+        }
 
         return insertStatement;
     }

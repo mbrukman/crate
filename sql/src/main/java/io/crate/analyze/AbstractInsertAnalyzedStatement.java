@@ -30,6 +30,7 @@ import io.crate.metadata.ReferenceInfo;
 import io.crate.metadata.table.TableInfo;
 import io.crate.planner.symbol.DynamicReference;
 import io.crate.planner.symbol.Reference;
+import io.crate.planner.symbol.Symbol;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
@@ -49,6 +50,8 @@ public abstract class AbstractInsertAnalyzedStatement implements AnalyzedStateme
     private TableInfo tableInfo;
 
     private final Set<ReferenceInfo> allocatedReferences = new HashSet<>();
+    private final List<Symbol[]> onDuplicateKeyAssignments = new ArrayList<>();
+    private final List<String[]> onDuplicateKeyAssignmentsColumns = new ArrayList<>();
 
     public List<Reference> columns() {
         return columns;
@@ -72,6 +75,24 @@ public abstract class AbstractInsertAnalyzedStatement implements AnalyzedStateme
 
     public void addPrimaryKeyColumnIdx(int primaryKeyColumnIdx) {
         this.primaryKeyColumnIndices.add(primaryKeyColumnIdx);
+    }
+
+    public void addOnDuplicateKeyAssignments(Symbol[] assignments) {
+        assert assignments != null && assignments.length != 0 : "must have assignments!";
+        onDuplicateKeyAssignments.add(assignments);
+    }
+
+    public List<Symbol[]> onDuplicateKeyAssignments() {
+        return onDuplicateKeyAssignments;
+    }
+
+    public void addOnDuplicateKeyAssignmentsColumns(String[] assignmentsColumns) {
+        assert assignmentsColumns != null && assignmentsColumns.length != 0 : "must have assignments columns!";
+        onDuplicateKeyAssignmentsColumns.add(assignmentsColumns);
+    }
+
+    public List<String[]> onDuplicateKeyAssignmentsColumns() {
+        return onDuplicateKeyAssignmentsColumns;
     }
 
     protected List<String> partitionedByColumnNames() {

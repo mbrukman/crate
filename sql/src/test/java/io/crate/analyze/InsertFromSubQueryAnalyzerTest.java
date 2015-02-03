@@ -31,6 +31,7 @@ import io.crate.operation.predicate.PredicateModule;
 import io.crate.operation.scalar.ScalarFunctionModule;
 import io.crate.operation.scalar.cast.ToStringFunction;
 import io.crate.planner.symbol.Function;
+import io.crate.planner.symbol.InputColumn;
 import io.crate.planner.symbol.Reference;
 import io.crate.planner.symbol.Symbol;
 import io.crate.testing.MockedClusterServiceModule;
@@ -43,8 +44,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.instanceOf;
-import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.*;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -194,6 +194,22 @@ public class InsertFromSubQueryAnalyzerTest extends BaseAnalyzerTest {
         assertThat(outputSymbols.get(1), instanceOf(Function.class));
         Function castFunction = (Function)outputSymbols.get(1);
         assertThat(castFunction.info().ident().name(), is(ToStringFunction.NAME));
+    }
+
+    @Test
+    public void testInsertFromQueryWithOnDuplicateKey() throws Exception {
+        InsertFromSubQueryAnalyzedStatement statement = (InsertFromSubQueryAnalyzedStatement) analyze(
+                "insert into users (id, name) (select id, other_id from users)" +
+                "on duplicate key update name = values (name) ");
+
+        Symbol valuesName = statement.onDuplicateKeyAssignments().get(0)[0];
+        assertThat((InputColumn)valuesName, equalTo(new InputColumn(1)));
+    }
+
+    @Test
+    public void testInsertFromQueryWithOnDuplicateKeyReferenceSelectTableInsteadOfUsingValues() throws Exception {
+        analyze("insert into users (id, name) (select t.id, t.name from users t)" +
+                "on duplicate key update name = t.name");
     }
 
     @Test
