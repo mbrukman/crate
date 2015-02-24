@@ -338,6 +338,15 @@ public class CrateSearchService extends InternalSearchService {
                                     List<Symbol> symbols,
                                     boolean[] reverseFlags,
                                     Boolean[] nullsFirst) {
+        return generateLuceneSort(context, symbols, reverseFlags, nullsFirst, sortSymbolVisitor);
+    }
+
+    @Nullable
+    private static Sort generateLuceneSort(SearchContext context,
+                                           List<Symbol> symbols,
+                                           boolean[] reverseFlags,
+                                           Boolean[] nullsFirst,
+                                           SortSymbolVisitor sortSymbolVisitor) {
         if (symbols.isEmpty()) {
             return null;
         }
@@ -347,6 +356,16 @@ public class CrateSearchService extends InternalSearchService {
                     symbols.get(i), new SortSymbolContext(context, reverseFlags[i], nullsFirst[i]));
         }
         return new Sort(sortFields);
+    }
+
+    @Nullable
+    public static Sort generateLuceneSort(SearchContext context,
+                                     List<Symbol> symbols,
+                                     boolean[] reverseFlags,
+                                     Boolean[] nullsFirst,
+                                     CollectInputSymbolVisitor<LuceneCollectorExpression<?>> inputSymbolVisitor) {
+        SortSymbolVisitor sortSymbolVisitor = new SortSymbolVisitor(inputSymbolVisitor);
+        return generateLuceneSort(context, symbols, reverseFlags, nullsFirst, sortSymbolVisitor);
     }
 
     private static class SortSymbolContext {

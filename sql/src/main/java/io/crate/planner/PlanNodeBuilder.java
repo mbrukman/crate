@@ -25,6 +25,7 @@ import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import io.crate.analyze.OrderBy;
 import io.crate.analyze.WhereClause;
 import io.crate.metadata.PartitionName;
 import io.crate.metadata.Routing;
@@ -56,6 +57,25 @@ public class PlanNodeBuilder {
 
         node.isPartitioned(tableInfo.isPartitioned());
         setOutputTypes(node);
+        return node;
+    }
+
+    public static CollectNode distributingCollect(TableInfo tableInfo,
+                                                  WhereClause whereClause,
+                                                  List<Symbol> toCollect,
+                                                  List<String> downstreamNodes,
+                                                  ImmutableList<Projection> projections,
+                                                  @Nullable OrderBy orderBy,
+                                                  @Nullable Integer limit) {
+        CollectNode node = distributingCollect(tableInfo, whereClause, toCollect, downstreamNodes, projections);
+        if( orderBy != null) {
+            node.orderBy(orderBy.orderBySymbols()); // TODO: process orderBySymbols
+            node.reverseFlags(orderBy.reverseFlags());
+            node.nullsFirst(orderBy.nullsFirst());
+        }
+        if (limit != null) {
+            node.limit(limit);
+        }
         return node;
     }
 

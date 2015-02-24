@@ -36,7 +36,10 @@ import org.elasticsearch.common.io.stream.StreamOutput;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 
 /**
  * A plan node which collects data.
@@ -50,6 +53,11 @@ public class CollectNode extends AbstractDQLPlanNode {
     private RowGranularity maxRowgranularity = RowGranularity.CLUSTER;
     private List<String> downStreamNodes;
     private boolean isPartitioned = false;
+
+    private int limit = Integer.MAX_VALUE;
+    private List<Symbol> orderBy;
+    boolean[] reverseFlags;
+    private Boolean[] nullsFirst;
 
     public CollectNode(String id) {
         super(id);
@@ -86,6 +94,42 @@ public class CollectNode extends AbstractDQLPlanNode {
 
     public CollectNode(String id, Routing routing) {
         this(id, routing, ImmutableList.<Symbol>of(), ImmutableList.<Projection>of());
+    }
+
+    public int limit() {
+        return limit;
+    }
+
+    public void limit(int limit) {
+        this.limit = limit;
+    }
+
+    public List<Symbol> orderBy() {
+        return orderBy;
+    }
+
+    public void orderBy(@Nullable List<Symbol> orderBy) {
+        this.orderBy = orderBy;
+    }
+
+    public boolean[] reverseFlags() {
+        return reverseFlags;
+    }
+
+    public void reverseFlags(boolean[] reverseFlags) {
+        this.reverseFlags = reverseFlags;
+    }
+
+    public boolean isOrdered() {
+        return reverseFlags != null && reverseFlags.length > 0;
+    }
+
+    public Boolean[] nullsFirst() {
+        return nullsFirst;
+    }
+
+    public void nullsFirst(Boolean[] nullsFirst) {
+        this.nullsFirst = nullsFirst;
     }
 
     public CollectNode(String id, Routing routing, List<Symbol> toCollect, List<Projection> projections) {
@@ -190,6 +234,27 @@ public class CollectNode extends AbstractDQLPlanNode {
         if (in.readBoolean()) {
             jobId = Optional.of(new UUID(in.readLong(), in.readLong()));
         }
+
+        limit = in.readVInt();
+        int numOrderBy = in.readVInt();
+
+        if (numOrderBy > 0) {
+            reverseFlags = new boolean[numOrderBy];
+
+            for (int i = 0; i < reverseFlags.length; i++) {
+                reverseFlags[i] = in.readBoolean();
+            }
+
+            orderBy = new ArrayList<>(numOrderBy);
+            for (int i = 0; i < reverseFlags.length; i++) {
+                orderBy.add(Symbol.fromStream(in));
+            }
+
+            nullsFirst = new Boolean[numOrderBy];
+            for (int i = 0; i < numOrderBy; i++) {
+                nullsFirst[i] = in.readOptionalBoolean();
+            }
+        }
     }
 
     @Override
@@ -224,6 +289,21 @@ public class CollectNode extends AbstractDQLPlanNode {
         if (jobId.isPresent()) {
             out.writeLong(jobId.get().getMostSignificantBits());
             out.writeLong(jobId.get().getLeastSignificantBits());
+        }
+        out.writeVInt(limit);
+        if (isOrdered()) {
+            out.writeVInt(reverseFlags.length);
+            for (boolean reverseFlag : reverseFlags) {
+                out.writeBoolean(reverseFlag);
+            }
+            for (Symbol symbol : orderBy) {
+                Symbol.toStream(symbol, out);
+            }
+            for (Boolean nullFirst : nullsFirst) {
+                out.writeOptionalBoolean(nullFirst);
+            }
+        } else {
+            out.writeVInt(0);
         }
     }
 

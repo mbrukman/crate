@@ -44,7 +44,10 @@ import io.crate.planner.projection.TopNProjection;
 import io.crate.planner.projection.builder.ProjectionBuilder;
 import io.crate.planner.projection.builder.SplitPoints;
 import io.crate.planner.symbol.Aggregation;
+import io.crate.planner.symbol.Function;
 import io.crate.planner.symbol.Symbol;
+import io.crate.planner.symbol.SymbolVisitor;
+import org.elasticsearch.common.Nullable;
 
 import java.util.ArrayList;
 import java.util.LinkedList;
@@ -113,12 +116,24 @@ public class DistributedGroupByConsumer implements Consumer {
                     Aggregation.Step.ITER,
                     Aggregation.Step.PARTIAL);
 
+            OrderBy orderBy = table.querySpec().orderBy();
+            if (orderBy != null) {
+                table.tableRelation().validateOrderBy(orderBy);
+            }
+
+            Integer collectorLimit = null;
+            if( table.querySpec().limit() != null && !table.querySpec().hasAggregates() ) {
+                collectorLimit = table.querySpec().offset() + table.querySpec().limit();
+            }
+            OrderBy collectOrderBy = hasFunction(orderBy) ? null : orderBy;
             CollectNode collectNode = PlanNodeBuilder.distributingCollect(
                     tableInfo,
                     table.querySpec().where(),
                     splitPoints.leaves(),
                     Lists.newArrayList(routing.nodes()),
-                    ImmutableList.<Projection>of(groupProjection)
+                    ImmutableList.<Projection>of(groupProjection),
+                    collectOrderBy,
+                    collectorLimit
             );
             // end: Map/Collect side
 
@@ -136,14 +151,6 @@ public class DistributedGroupByConsumer implements Consumer {
                     splitPoints.aggregates(),
                     Aggregation.Step.PARTIAL,
                     Aggregation.Step.FINAL));
-
-
-            OrderBy orderBy = table.querySpec().orderBy();
-            if (orderBy != null) {
-                table.tableRelation().validateOrderBy(orderBy);
-            }
-
-
             HavingClause havingClause = table.querySpec().having();
             if (havingClause != null) {
                 if (havingClause.noMatch()) {
@@ -200,5 +207,34 @@ public class DistributedGroupByConsumer implements Consumer {
             return relation;
         }
 
+    }
+
+    private static boolean hasFunction(@Nullable OrderBy orderBy) {
+        if( orderBy == null) {
+            return false;
+        }
+        SortSymbolVisitor sortSymbolVisitor = new SortSymbolVisitor();
+        SortSymbolContext ctx = new SortSymbolContext();
+        for( Symbol symbol : orderBy.orderBySymbols()) {
+            sortSymbolVisitor.process(symbol, ctx);
+            if(ctx.hasFunction) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static class SortSymbolContext {
+
+        public boolean hasFunction = false;
+    }
+
+    private static class SortSymbolVisitor extends SymbolVisitor<SortSymbolContext, Void> {
+
+        @Override
+        public Void visitFunction(Function symbol, SortSymbolContext context) {
+            context.hasFunction = true;
+            return super.visitFunction(symbol, context);
+        }
     }
 }

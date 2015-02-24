@@ -1018,4 +1018,14 @@ public class GroupByAggregateTest extends SQLTransportIntegrationTest {
         assertThat((Double)response.rows()[0][4], is(1090.6875d));
         assertThat((Double)response.rows()[0][5], is(33.025558284456d));
     }
+
+    @Test
+    public void groupBySortOnGroupingKey() throws Exception {
+        execute("select department from employees group by department order by department limit 3");
+        assertThat(response.rowCount(), is(3L));
+        assertThat((String)response.rows()[0][0], is("HR"));
+        assertThat((String)response.rows()[1][0], is("engineering"));
+        assertThat((String)response.rows()[2][0], is("internship"));
+    }
+
 }
