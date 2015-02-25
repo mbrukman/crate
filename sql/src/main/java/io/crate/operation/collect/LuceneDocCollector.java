@@ -21,13 +21,12 @@
 
 package io.crate.operation.collect;
 
-import com.google.common.base.Function;
+import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableMap;
-import io.crate.Constants;
+import io.crate.action.sql.query.CrateSearchContext;
 import io.crate.analyze.WhereClause;
 import io.crate.breaker.CrateCircuitBreakerService;
 import io.crate.breaker.RamAccountingContext;
-import io.crate.executor.transport.CollectContextService;
 import io.crate.lucene.LuceneQueryBuilder;
 import io.crate.metadata.Functions;
 import io.crate.operation.Input;
@@ -37,12 +36,12 @@ import io.crate.operation.reference.doc.lucene.LuceneCollectorExpression;
 import org.apache.lucene.index.AtomicReader;
 import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.FieldInfo;
-import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.*;
 import org.elasticsearch.cache.recycler.CacheRecycler;
 import org.elasticsearch.cache.recycler.PageCacheRecycler;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.common.util.BigArrays;
+import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.fieldvisitor.FieldsVisitor;
 import org.elasticsearch.index.mapper.internal.SourceFieldMapper;
 import org.elasticsearch.index.query.ParsedQuery;
@@ -50,18 +49,17 @@ import org.elasticsearch.index.service.IndexService;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.shard.service.IndexShard;
 import org.elasticsearch.script.ScriptService;
+import org.elasticsearch.search.Scroll;
 import org.elasticsearch.search.SearchShardTarget;
-import org.elasticsearch.search.internal.DefaultSearchContext;
 import org.elasticsearch.search.internal.SearchContext;
-import org.elasticsearch.search.internal.ShardSearchLocalRequest;
 import org.elasticsearch.threadpool.ThreadPool;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 
 /**
  * collect documents from ES shard, a lucene index
@@ -125,7 +123,7 @@ public class LuceneDocCollector extends Collector implements CrateCollector {
                               final Functions functions,
                               final WhereClause whereClause,
                               Projector downStreamProjector,
-                              int jobSearchContextId) throws Exception {
+                              final int jobSearchContextId) throws Exception {
         downstream(downStreamProjector);
         final SearchShardTarget searchShardTarget = new SearchShardTarget(
                 clusterService.localNode().id(), shardId.getIndex(), shardId.id());
@@ -135,34 +133,33 @@ public class LuceneDocCollector extends Collector implements CrateCollector {
         this.jobSearchContextId = jobSearchContextId;
 
         final IndexShard indexShard = indexService.shardSafe(shardId.id());
-        final int searchContextId = Objects.hash(jobId, shardId);
+        final Engine.Searcher engineSearcher = collectorContextService.getOrCreateEngineSearcher(indexShard, jobId);
+
         this.searchContext = collectorContextService.getOrCreateContext(
                 jobId,
-                searchContextId,
-                new Function<IndexReader, SearchContext>() {
+                shardId.id(),
+                jobSearchContextId,
+                new Callable<CrateSearchContext>() {
 
                     @Nullable
                     @Override
-                    public SearchContext apply(@Nullable IndexReader indexReader) {
-                        // TODO: handle IndexReader
-                        ShardSearchLocalRequest searchRequest = new ShardSearchLocalRequest(
-                                new String[] { Constants.DEFAULT_MAPPING_TYPE },
-                                System.currentTimeMillis()
-                        );
-                        SearchContext localContext = null;
+                    public CrateSearchContext call() {
+                        CrateSearchContext localContext = null;
                         try {
-                            localContext = new DefaultSearchContext(
-                                    searchContextId,
-                                    searchRequest,
+                            localContext = new CrateSearchContext(
+                                    jobSearchContextId,
+                                    System.currentTimeMillis(),
                                     searchShardTarget,
-                                    EngineSearcher.getSearcherWithRetry(indexShard, null), // TODO: use same searcher/reader for same jobId and searchContextId
+                                    engineSearcher,
                                     indexService,
                                     indexShard,
                                     scriptService,
                                     cacheRecycler,
                                     pageCacheRecycler,
                                     bigArrays,
-                                    threadPool.estimatedTimeInMillisCounter()
+                                    threadPool.estimatedTimeInMillisCounter(),
+                                    Optional.<Scroll>absent(),
+                                    CollectContextService.EXPIRATION_DEFAULT.millis()
                             );
                             LuceneQueryBuilder builder = new LuceneQueryBuilder(functions, localContext, indexService.cache());
                             LuceneQueryBuilder.Context ctx = builder.convert(whereClause);
@@ -264,4 +261,5 @@ public class LuceneDocCollector extends Collector implements CrateCollector {
             SearchContext.removeCurrent();
         }
     }
+
 }

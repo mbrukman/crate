@@ -25,7 +25,7 @@ import com.carrotsearch.hppc.cursors.ObjectCursor;
 import io.crate.action.sql.*;
 import io.crate.action.sql.parser.SQLXContentSourceContext;
 import io.crate.action.sql.parser.SQLXContentSourceParser;
-import io.crate.executor.transport.CollectContextService;
+import io.crate.operation.collect.CollectContextService;
 import io.crate.test.integration.CrateIntegrationTest;
 import io.crate.testing.SQLTransportExecutor;
 import org.elasticsearch.action.admin.cluster.state.ClusterStateRequest;

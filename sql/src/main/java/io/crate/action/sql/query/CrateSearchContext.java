@@ -22,6 +22,7 @@
 package io.crate.action.sql.query;
 
 import com.google.common.base.Optional;
+import io.crate.Constants;
 import org.apache.lucene.util.Counter;
 import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.cache.recycler.CacheRecycler;
@@ -43,9 +44,9 @@ import java.util.Map;
 
 public class CrateSearchContext extends DefaultSearchContext {
 
+    private final Engine.Searcher engineSearcher;
+
     public CrateSearchContext(long id,
-                              final int numShards,
-                              final String[] types,
                               final long nowInMillis,
                               SearchShardTarget shardTarget,
                               Engine.Searcher engineSearcher,
@@ -58,30 +59,31 @@ public class CrateSearchContext extends DefaultSearchContext {
                               Counter timeEstimateCounter,
                               Optional<Scroll> scroll,
                               long keepAlive) {
-        super(id, new CrateSearchShardRequest(numShards, types, nowInMillis, scroll, indexShard),
+        super(id, new CrateSearchShardRequest(nowInMillis, scroll, indexShard),
                 shardTarget, engineSearcher, indexService,
                 indexShard, scriptService, cacheRecycler, pageCacheRecycler,
                 bigArrays, timeEstimateCounter);
+        this.engineSearcher = engineSearcher;
         if (scroll.isPresent()) {
             scroll(scroll.get());
         }
         keepAlive(keepAlive);
     }
 
+    public Engine.Searcher engineSearcher() {
+        return engineSearcher;
+    }
+
     private static class CrateSearchShardRequest implements ShardSearchRequest {
 
-        private final int numShards;
-        private final String[] types;
+        private final String[] types = new String[]{Constants.DEFAULT_MAPPING_TYPE};
         private final long nowInMillis;
         private final Scroll scroll;
         private final String index;
         private final int shardId;
 
-        private CrateSearchShardRequest(int numShards, String[] types,
-                                        long nowInMillis, Optional<Scroll> scroll,
+        private CrateSearchShardRequest(long nowInMillis, Optional<Scroll> scroll,
                                         IndexShard indexShard) {
-            this.numShards = numShards;
-            this.types = types;
             this.nowInMillis = nowInMillis;
             this.scroll = scroll.orNull();
             this.index = indexShard.indexService().index().name();
@@ -121,7 +123,7 @@ public class CrateSearchContext extends DefaultSearchContext {
 
         @Override
         public int numberOfShards() {
-            return numShards;
+            return 0;
         }
 
         @Override

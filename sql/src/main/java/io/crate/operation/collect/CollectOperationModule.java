@@ -21,7 +21,6 @@
 
 package io.crate.operation.collect;
 
-import io.crate.executor.transport.CollectContextService;
 import org.elasticsearch.common.inject.AbstractModule;
 
 public class CollectOperationModule extends AbstractModule {

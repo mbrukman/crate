@@ -25,7 +25,6 @@ import io.crate.analyze.EvaluatingNormalizer;
 import io.crate.blob.v2.BlobIndices;
 import io.crate.breaker.CrateCircuitBreakerService;
 import io.crate.exceptions.UnhandledServerException;
-import io.crate.executor.transport.CollectContextService;
 import io.crate.executor.transport.TransportActionProvider;
 import io.crate.metadata.Functions;
 import io.crate.metadata.shard.ShardReferenceResolver;

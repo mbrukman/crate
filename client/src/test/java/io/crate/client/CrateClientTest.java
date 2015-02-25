@@ -26,7 +26,7 @@ import io.crate.action.sql.SQLBulkRequest;
 import io.crate.action.sql.SQLBulkResponse;
 import io.crate.action.sql.SQLRequest;
 import io.crate.action.sql.SQLResponse;
-import io.crate.executor.transport.CollectContextService;
+import io.crate.operation.collect.CollectContextService;
 import io.crate.test.integration.CrateIntegrationTest;
 import io.crate.types.DataType;
 import io.crate.types.StringType;
