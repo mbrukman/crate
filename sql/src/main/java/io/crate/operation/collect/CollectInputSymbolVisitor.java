@@ -26,7 +26,10 @@ import io.crate.metadata.Functions;
 import io.crate.operation.AbstractImplementationSymbolVisitor;
 import io.crate.operation.Input;
 import io.crate.operation.reference.DocLevelReferenceResolver;
+import io.crate.operation.reference.doc.lucene.OrderByColumnCollectorExpression;
+import io.crate.planner.node.dql.CollectNode;
 import io.crate.planner.symbol.Reference;
+import io.crate.planner.symbol.Symbol;
 import io.crate.planner.symbol.SymbolFormatter;
 
 import java.util.ArrayList;
@@ -45,14 +48,42 @@ public class CollectInputSymbolVisitor<E extends Input<?>>
 
         protected ArrayList<E> docLevelExpressions = new ArrayList<>();
 
+        private ArrayList<Symbol> orderBySymbols = new ArrayList<>();
+
         public List<E> docLevelExpressions() {
             return docLevelExpressions;
+        }
+
+        protected void add(Input<?> input) {
+            super.add(input);
+        }
+
+        public void addOrderBySymbol(Symbol symbol) {
+            orderBySymbols.add(symbol);
+        }
+
+        public List<Symbol> orderBySymbols() {
+            return orderBySymbols;
         }
     }
 
     public CollectInputSymbolVisitor(Functions functions, DocLevelReferenceResolver<E> referenceResolver) {
         super(functions);
         this.referenceResolver = referenceResolver;
+    }
+
+    @Override
+    public Context process(CollectNode node) {
+        Context context = newContext();
+        if (node.toCollect() != null) {
+            for (Symbol symbol : node.toCollect()) {
+                if(node.orderBy() != null && node.orderBy().contains(symbol) && !node.isSystemSchema()) {
+                    context.addOrderBySymbol(symbol);
+                }
+                context.add(process(symbol, context));
+            }
+        }
+        return context;
     }
 
     @Override
@@ -64,11 +95,17 @@ public class CollectInputSymbolVisitor<E extends Input<?>>
     public Input<?> visitReference(Reference symbol, Context context) {
         // only doc level references are allowed here, since other granularities
         // should have been resolved by other visitors already
-        E docLevelExpression = referenceResolver.getImplementation(symbol.info());
-        if (docLevelExpression == null) {
-            throw new UnhandledServerException(SymbolFormatter.format("Cannot handle Reference %s", symbol));
+        if (context.orderBySymbols() != null && context.orderBySymbols().contains(symbol)) {
+            OrderByColumnCollectorExpression docLevelExpression = new OrderByColumnCollectorExpression(symbol.valueType());
+            context.docLevelExpressions.add(docLevelExpression);
+            return docLevelExpression;
+        } else {
+            E docLevelExpression = referenceResolver.getImplementation(symbol.info());
+            if (docLevelExpression == null) {
+                throw new UnhandledServerException(SymbolFormatter.format("Cannot handle Reference %s", symbol));
+            }
+            context.docLevelExpressions.add(docLevelExpression);
+            return docLevelExpression;
         }
-        context.docLevelExpressions.add(docLevelExpression);
-        return docLevelExpression;
     }
 }

@@ -34,9 +34,10 @@ import org.junit.rules.ExpectedException;
 
 import java.util.HashMap;
 
+import static org.hamcrest.CoreMatchers.anyOf;
 import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.Matchers.closeTo;
-import static org.hamcrest.Matchers.isIn;
+import static org.hamcrest.CoreMatchers.nullValue;
+import static org.hamcrest.Matchers.*;
 
 @CrateIntegrationTest.ClusterScope(scope = CrateIntegrationTest.Scope.GLOBAL)
 public class GroupByAggregateTest extends SQLTransportIntegrationTest {
@@ -659,6 +660,14 @@ public class GroupByAggregateTest extends SQLTransportIntegrationTest {
     }
 
     @Test
+    public void testHavingGroupByDesc() throws Exception {
+        this.setup.groupBySetup("integer");
+        execute("select age from characters group by age having age > 40 order by age desc");
+        assertEquals(2L, response.rowCount());
+        assertEquals(112, response.rows()[0][0]);
+    }
+
+    @Test
     public void testHavingOnSameAggregate() throws Exception {
         this.setup.groupBySetup("integer");
         execute("select avg(birthdate) from characters group by gender\n" +
@@ -885,12 +894,12 @@ public class GroupByAggregateTest extends SQLTransportIntegrationTest {
                 "   item_id string" +
                 ") clustered into 2 shards with (number_of_replicas = 0)");
         ensureYellow();
-        execute("insert into likes (event_id, item_id) values (?, ?)", new Object[][] {
-                new Object[] { "event1", "item1" },
-                new Object[] { "event1", "item1" },
-                new Object[] { "event1", "item2" },
-                new Object[] { "event2", "item1" },
-                new Object[] { "event2", "item2" },
+        execute("insert into likes (event_id, item_id) values (?, ?)", new Object[][]{
+                new Object[]{"event1", "item1"},
+                new Object[]{"event1", "item1"},
+                new Object[]{"event1", "item2"},
+                new Object[]{"event2", "item1"},
+                new Object[]{"event2", "item2"},
         });
         execute("refresh table likes");
 
@@ -1021,11 +1030,92 @@ public class GroupByAggregateTest extends SQLTransportIntegrationTest {
 
     @Test
     public void groupBySortOnGroupingKey() throws Exception {
-        execute("select department from employees group by department order by department limit 3");
-        assertThat(response.rowCount(), is(3L));
-        assertThat((String)response.rows()[0][0], is("HR"));
-        assertThat((String)response.rows()[1][0], is("engineering"));
-        assertThat((String)response.rows()[2][0], is("internship"));
+        execute("select department from employees group by department order by department limit 2");
+        assertThat(response.rowCount(), is(2L));
+        assertThat((String) response.rows()[0][0], is("HR"));
+        assertThat((String) response.rows()[1][0], is("engineering"));
     }
 
+    @Test
+    public void groupBySortOnGroupingKeyNullFirst() throws Exception {
+        this.setup.groupBySetup();
+        execute("select distinct age from characters order by age desc nulls first limit 2");
+        assertThat(response.rowCount(), is(2L));
+        assertThat(response.rows()[0][0], is(nullValue()));
+        assertThat((Integer) response.rows()[1][0], is(112));
+    }
+
+    @Test
+    public void groupByMultiValuesSortOnGroupingKey() throws Exception {
+        execute("select department, name from employees group by department, name order by department limit 4");
+        assertThat(response.rowCount(), is(4L));
+        assertThat((String)response.rows()[0][0], is("HR"));
+        assertThat((String)response.rows()[0][1], is(anyOf(is("ratbert"), is("catbert"))));
+
+        assertThat((String)response.rows()[1][0], is("HR"));
+        assertThat((String)response.rows()[1][1], is(anyOf(is("ratbert"), is("catbert"))));
+
+        assertThat((String)response.rows()[2][0], is("engineering"));
+        assertThat((String)response.rows()[2][1], is(anyOf(is("dilbert"), is("wally"))));
+
+        assertThat((String)response.rows()[3][0], is("engineering"));
+        assertThat((String)response.rows()[3][1], is(anyOf(is("dilbert"), is("wally"))));
+    }
+
+    @Test
+    public void groupBySortOnGroupingKeyNonDistributedGroupBy() throws Exception {
+        execute("create table foo (id int, name string, country string) clustered BY (country) with (number_of_replicas = 0)");
+        ensureGreen();
+
+        execute("insert into foo (id, name, country) values (?, ?, ?)", new Object[][]{
+                new Object[] { 1, "Arthur", "Austria" },
+                new Object[] { 2, "Trillian", "Austria" },
+                new Object[] { 3, "Marvin", "Austria" },
+                new Object[] { 4, "Jeltz", "Austria" },
+                new Object[] { 5, "Ford", "Austria" },
+                new Object[] { 6, "Slartibardfast", "Italy" },
+        });
+        refresh();
+        execute("select name from foo where country = 'Austria' group by name order by name desc limit 2 offset 2");
+        assertThat(response.rowCount(), is(2L));
+        assertThat((String)response.rows()[0][0], is("Jeltz"));
+        assertThat((String)response.rows()[1][0], is("Ford"));
+    }
+
+    @Test
+    public void testGroupByOnGroupingKeyReduceOnCollectorGroupBy() throws Exception {
+        execute("create table foo (id int primary key, name string primary key) with (number_of_replicas = 0)");
+        ensureGreen();
+
+        execute("insert into foo (id, name) values (?, ?)", new Object[][] {
+                new Object[] { 1, "Arthur" },
+                new Object[] { 2, "Trillian" },
+                new Object[] { 3, "Slartibardfast" },
+                new Object[] { 4, "Marvin" },
+        });
+        refresh();
+        execute("select name from foo group by id, name order by name desc limit 2 offset 1");
+        assertThat(response.rowCount(), Is.is(2L));
+        assertThat((String) response.rows()[0][0], Is.is("Slartibardfast"));
+        assertThat((String) response.rows()[1][0], Is.is("Marvin"));
+    }
+
+
+    @Test
+    public void groupBySortOnGroupingKeyWithinFunction() throws Exception {
+        this.setup.groupBySetup();
+        execute("select distinct age from characters order by age * -1 limit 2");
+        assertThat(response.rowCount(), is(2L));
+        assertThat((Integer)response.rows()[0][0], is(112));
+        assertThat((Integer)response.rows()[1][0], is(43));
+    }
+
+    @Test
+    public void groupBySortOnGroupingKeySelectKeyWithinFunction() throws Exception {
+        this.setup.groupBySetup();
+        execute("select (age - 10) from characters group by (age - 10) order by (age - 10) nulls first limit 2");
+        assertThat(response.rowCount(), is(2L));
+        assertThat(response.rows()[0][0], is(nullValue()));
+        assertThat((Long)response.rows()[1][0], is(22L));
+    }
 }

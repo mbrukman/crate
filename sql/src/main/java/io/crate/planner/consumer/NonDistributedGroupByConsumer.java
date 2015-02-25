@@ -141,11 +141,22 @@ public class NonDistributedGroupByConsumer implements Consumer {
                     Aggregation.Step.ITER,
                     Aggregation.Step.PARTIAL);
 
+            OrderBy orderBy = table.querySpec().orderBy();
+            if (orderBy != null) {
+                table.tableRelation().validateOrderBy(orderBy);
+            }
+            Integer collectorLimit = null;
+            if( table.querySpec().limit() != null && !table.querySpec().hasAggregates() ) {
+                collectorLimit = table.querySpec().offset() + table.querySpec().limit();
+            }
+            OrderBy collectOrderBy = orderBy != null && orderBy.hasFunction() ? null : orderBy;
             CollectNode collectNode = PlanNodeBuilder.collect(
                     tableInfo,
                     table.querySpec().where(),
                     splitPoints.leaves(),
-                    ImmutableList.<Projection>of(groupProjection)
+                    ImmutableList.<Projection>of(groupProjection),
+                    collectOrderBy,
+                    collectorLimit
             );
             // handler
             List<Symbol> collectOutputs = new ArrayList<>(
@@ -155,10 +166,7 @@ public class NonDistributedGroupByConsumer implements Consumer {
             collectOutputs.addAll(splitPoints.aggregates());
 
 
-            OrderBy orderBy = table.querySpec().orderBy();
-            if (orderBy != null) {
-                table.tableRelation().validateOrderBy(orderBy);
-            }
+
 
             List<Projection> projections = new ArrayList<>();
             projections.add(projectionBuilder.groupProjection(

@@ -1629,4 +1629,21 @@ public class PlannerTest {
         assertThat(item.updateAssignments().length, is(1));
         assertThat(item.updateAssignments()[0], isLiteral(null, DataTypes.STRING));
     }
+
+    private boolean min(boolean reverseFlag, Boolean nullFirst) {
+        return reverseFlag ^ (nullFirst != null ? nullFirst : reverseFlag);
+    }
+
+    @Test
+    public void testNonsense() throws Exception {
+        assertThat(min(true, true), is(false));
+        assertThat(min(true, false), is(true));
+        assertThat(min(true, null), is(false));
+
+        assertThat(min(false, true), is(true));
+        assertThat(min(false, false), is(false));
+        assertThat(min(false, null), is(false));
+
+
+    }
 }

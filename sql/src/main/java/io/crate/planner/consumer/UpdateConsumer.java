@@ -162,7 +162,7 @@ public class UpdateConsumer implements Consumer {
                         ImmutableList.<Symbol>of(uidReference),
                         ImmutableList.<Projection>of(updateProjection),
                         null,
-                        Preference.PRIMARY.type()
+                        Preference.PRIMARY.type(), null, null
                 );
                 MergeNode mergeNode = PlanNodeBuilder.localMerge(
                         ImmutableList.<Projection>of(localMergeProjection), collectNode);

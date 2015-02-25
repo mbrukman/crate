@@ -21,12 +21,14 @@
 
 package io.crate.planner.projection;
 
+import io.crate.analyze.OrderBy;
 import io.crate.planner.RowGranularity;
 import io.crate.planner.symbol.Aggregation;
 import io.crate.planner.symbol.Symbol;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,6 +38,9 @@ public class GroupProjection extends Projection {
     List<Symbol> keys;
     List<Aggregation> values;
     List<Symbol> outputs;
+    OrderBy orderBy;
+    int offset = 0;
+    int limit;
 
     private RowGranularity requiredGranularity = RowGranularity.CLUSTER;
 
@@ -52,6 +57,16 @@ public class GroupProjection extends Projection {
     public GroupProjection(List<Symbol> keys, List<Aggregation> values) {
         this.keys = keys;
         this.values = values;
+    }
+
+    public GroupProjection(List<Symbol> keys, List<Aggregation> values,
+                           @Nullable OrderBy orderBy,
+                           int offset,
+                           @Nullable Integer limit) {
+        this(keys, values);
+        this.orderBy = orderBy;
+        this.offset = offset;
+        this.limit = limit;
     }
 
     public List<Symbol> keys() {

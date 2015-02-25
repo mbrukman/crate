@@ -188,11 +188,18 @@ public class ReduceOnCollectorGroupByConsumer implements Consumer {
                 ));
             }
 
+            Integer collectorLimit = null;
+            if( table.querySpec().limit() != null && !table.querySpec().hasAggregates() ) {
+                collectorLimit = table.querySpec().offset() + table.querySpec().limit();
+            }
+            OrderBy collectOrderBy = orderBy != null && orderBy.hasFunction() ? null : orderBy;
             CollectNode collectNode = PlanNodeBuilder.collect(
                     tableInfo,
                     table.querySpec().where(),
                     splitPoints.leaves(),
-                    ImmutableList.copyOf(projections)
+                    ImmutableList.copyOf(projections),
+                    collectOrderBy,
+                    collectorLimit
             );
             // handler
             List<Projection> handlerProjections = new ArrayList<>();
