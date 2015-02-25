@@ -23,6 +23,8 @@ package io.crate.operation.merge;
 
 import com.google.common.util.concurrent.ListenableFuture;
 import io.crate.breaker.RamAccountingContext;
+import io.crate.core.collections.Bucket;
+import io.crate.core.collections.Row;
 import io.crate.executor.transport.TransportActionProvider;
 import io.crate.operation.DownstreamOperation;
 import io.crate.operation.ImplementationSymbolVisitor;
@@ -66,8 +68,8 @@ public class MergeOperation implements DownstreamOperation {
         projectorChain.startProjections();
     }
 
-    public boolean addRows(Object[][] rows) throws Exception {
-        for (Object[] row : rows) {
+    public boolean addRows(Bucket rows) throws Exception {
+        for (Row row : rows) {
             boolean more = wantMore.get();
             if (more) {
                 synchronized (lock) {
@@ -93,7 +95,7 @@ public class MergeOperation implements DownstreamOperation {
         downstream.upstreamFinished();
     }
 
-    public ListenableFuture<Object[][]> result() {
+    public ListenableFuture<Bucket> result() {
         return projectorChain.result();
     }
 

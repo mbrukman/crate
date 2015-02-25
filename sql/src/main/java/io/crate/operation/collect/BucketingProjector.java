@@ -21,43 +21,51 @@
 
 package io.crate.operation.collect;
 
+import io.crate.core.collections.Row;
+import io.crate.operation.ProjectorUpstream;
+import io.crate.operation.projectors.Projector;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.StringHelper;
 
 import javax.annotation.Nullable;
 
-public class ModuloBucketingIterator extends BucketingIterator {
+/**
+ * bucketing input rows while iterating according to the modulo
+ */
+public class BucketingProjector {
 
-    public ModuloBucketingIterator(int numBuckets, Iterable<Object[]> rowIterable) {
-        super(numBuckets, rowIterable);
+    private final Projector[] downstreams;
+    private ProjectorUpstream upstream;
+
+    public BucketingProjector(Projector[] downstreams) {
+        this.downstreams = downstreams;
     }
 
-    /**
-     * get bucket number by doing modulo hashcode of first row-element
-     */
+
     @Override
-    protected int getBucket(@Nullable Object[] row) {
-        if (row == null || row.length == 0 || row[0] == null) {
-            return 0;
-        } else {
-            int hash = hashCode(row[0]);
-            if (hash == Integer.MIN_VALUE) {
-                hash = 0; // Math.abs(Integer.MIN_VALUE) == Integer.MIN_VALUE
-            }
-            return Math.abs(hash) % numBuckets;
-        }
+    public void startProjection() {
+
     }
 
+    @Override
+    public boolean setNextRow(Row row) {
+        downstreams[getBucket(row)].setNextRow(row);
+        return false;
+    }
 
-    private static int hashCode(Object value) {
-        if (value instanceof BytesRef) {
-            // since lucene 4.8
-            // BytesRef.hashCode() uses a random seed across different jvm
-            // which causes the hashCode / routing to be different on each node
-            // this breaks the group by redistribution logic - need to use a fixed seed here
-            // to be consistent.
-            return StringHelper.murmurhash3_x86_32(((BytesRef) value), 1);
-        }
-        return value.hashCode();
+    @Override
+    public void registerUpstream(ProjectorUpstream upstream) {
+        this.upstream = upstream;
+        // ignored
+    }
+
+    @Override
+    public void upstreamFinished() {
+        // ignored
+    }
+
+    @Override
+    public void upstreamFailed(Throwable throwable) {
+        //ignored
     }
 }

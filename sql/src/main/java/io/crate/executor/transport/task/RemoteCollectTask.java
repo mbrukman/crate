@@ -123,6 +123,9 @@ public class RemoteCollectTask extends JobTask {
         String ramAccountingContextId = String.format("%s: %s", collectNode.id(), operationId);
         final RamAccountingContext ramAccountingContext =
                 new RamAccountingContext(ramAccountingContextId, circuitBreaker);
+
+
+
         ListenableFuture<Object[][]> future = handlerSideDataCollectOperation.collect(collectNode,
                 ramAccountingContext);
         Futures.addCallback(future, new FutureCallback<Object[][]>() {

@@ -23,11 +23,12 @@ package io.crate.operation.projectors;
 
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
+import io.crate.core.collections.Bucket;
+import io.crate.core.collections.CollectionBucket;
+import io.crate.core.collections.Row;
 import io.crate.operation.ProjectorUpstream;
 
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
+import java.util.Vector;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -39,8 +40,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class CollectingProjector implements ResultProvider, Projector {
 
     private final AtomicInteger upstreamsRemaining;
-    public List<Object[]> rows = new ArrayList<>();
-    private SettableFuture<Object[][]> result = SettableFuture.create();
+    public final Vector<Object[]> rows = new Vector<>();
+    private SettableFuture<Bucket> result = SettableFuture.create();
+
 
     public CollectingProjector() {
         this.upstreamsRemaining = new AtomicInteger(0);
@@ -54,8 +56,12 @@ public class CollectingProjector implements ResultProvider, Projector {
     }
 
     @Override
-    public synchronized boolean setNextRow(Object... row) {
-        rows.add(row);
+    public boolean setNextRow(Row row) {
+        Object[] materialized = new Object[row.size()];
+        for (int i = 0; i < materialized.length; i++) {
+            materialized[i] = row.get(i);
+        }
+        rows.add(materialized);
         return true;
     }
 
@@ -67,7 +73,7 @@ public class CollectingProjector implements ResultProvider, Projector {
     @Override
     public void upstreamFinished() {
         if (upstreamsRemaining.decrementAndGet() <= 0) {
-            result.set(rows.toArray(new Object[rows.size()][]));
+            result.set(new CollectionBucket(rows));
         }
     }
 
@@ -79,15 +85,8 @@ public class CollectingProjector implements ResultProvider, Projector {
     }
 
     @Override
-    public ListenableFuture<Object[][]> result() {
+    public ListenableFuture<Bucket> result() {
         return result;
     }
 
-    @Override
-    public Iterator<Object[]> iterator() throws IllegalStateException {
-        if (!result.isDone()) {
-            throw new IllegalStateException("result not ready yet");
-        }
-        return rows.iterator();
-    }
 }

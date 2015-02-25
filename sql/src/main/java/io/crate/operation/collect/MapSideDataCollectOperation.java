@@ -26,12 +26,15 @@ import com.google.common.collect.Iterables;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import io.crate.Streamer;
 import io.crate.analyze.EvaluatingNormalizer;
 import io.crate.breaker.RamAccountingContext;
+import io.crate.core.collections.Bucket;
 import io.crate.exceptions.TableUnknownException;
 import io.crate.exceptions.UnhandledServerException;
 import io.crate.executor.TaskResult;
 import io.crate.executor.transport.TransportActionProvider;
+import io.crate.executor.transport.distributed.SingleBucketBuilder;
 import io.crate.metadata.Functions;
 import io.crate.metadata.ReferenceResolver;
 import io.crate.operation.ImplementationSymbolVisitor;
@@ -40,11 +43,13 @@ import io.crate.operation.collect.files.FileInputFactory;
 import io.crate.operation.collect.files.FileReadingCollector;
 import io.crate.operation.projectors.FlatProjectorChain;
 import io.crate.operation.projectors.ProjectionToProjectorVisitor;
+import io.crate.operation.projectors.Projector;
 import io.crate.operation.reference.file.FileLineReferenceResolver;
 import io.crate.planner.RowGranularity;
 import io.crate.planner.node.dql.CollectNode;
 import io.crate.planner.node.dql.FileUriCollectNode;
 import io.crate.planner.symbol.ValueSymbolVisitor;
+import io.crate.types.DataType;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Injector;
@@ -66,7 +71,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 /**
  * collect local data from node/shards/docs on nodes where the data resides (aka Mapper nodes)
  */
-public class MapSideDataCollectOperation implements CollectOperation<Object[][]> {
+public class MapSideDataCollectOperation<ResultProjectorType> implements CollectOperation<Bucket> {
 
     private final FileCollectInputSymbolVisitor fileInputSymbolVisitor;
     private final CollectServiceResolver collectServiceResolver;
@@ -77,15 +82,18 @@ public class MapSideDataCollectOperation implements CollectOperation<Object[][]>
 
     private static class SimpleShardCollectFuture extends ShardCollectFuture {
 
-        public SimpleShardCollectFuture(int numShards, ShardProjectorChain projectorChain) {
-            super(numShards, projectorChain);
+        private ListenableFuture<Bucket> upstreamResult;
+
+        public SimpleShardCollectFuture(int numShards, ListenableFuture<Bucket> upstreamResult) {
+            super(numShards);
+            this.upstreamResult = upstreamResult;
         }
 
         @Override
         protected void onAllShardsFinished() {
-            Futures.addCallback(resultProvider.result(), new FutureCallback<Object[][]>() {
+            Futures.addCallback(upstreamResult, new FutureCallback<Bucket>() {
                 @Override
-                public void onSuccess(@Nullable Object[][] result) {
+                public void onSuccess(@Nullable Bucket result) {
                     set(result);
                 }
 
@@ -145,7 +153,9 @@ public class MapSideDataCollectOperation implements CollectOperation<Object[][]>
      * -> run node level collect (cluster level)
      */
     @Override
-    public ListenableFuture<Object[][]> collect(CollectNode collectNode, RamAccountingContext ramAccountingContext) {
+    public ListenableFuture<Bucket> collect(CollectNode collectNode,
+                                            RamAccountingContext ramAccountingContext,
+                                            Projector resultProjector) {
         assert collectNode.isRouted(); // not routed collect is not handled here
         String localNodeId = clusterService.localNode().id();
         if (collectNode.executionNodes().contains(localNodeId)) {
@@ -166,7 +176,7 @@ public class MapSideDataCollectOperation implements CollectOperation<Object[][]>
      * @param collectNode {@link io.crate.planner.node.dql.CollectNode} instance containing routing information and symbols to collect
      * @return the collect result from this node, one row only so return value is <code>Object[1][]</code>
      */
-    protected ListenableFuture<Object[][]> handleNodeCollect(CollectNode collectNode, RamAccountingContext ramAccountingContext) {
+    protected ListenableFuture<Bucket> handleNodeCollect(CollectNode collectNode, RamAccountingContext ramAccountingContext) {
         collectNode = collectNode.normalize(nodeNormalizer);
         if (collectNode.whereClause().noMatch()) {
             return Futures.immediateFuture(TaskResult.EMPTY_RESULT.rows());
@@ -234,16 +244,18 @@ public class MapSideDataCollectOperation implements CollectOperation<Object[][]>
      * @param collectNode {@link io.crate.planner.node.dql.CollectNode} containing routing information and symbols to collect
      * @return the collect results from all shards on this node that were given in {@link io.crate.planner.node.dql.CollectNode#routing}
      */
-    protected ListenableFuture<Object[][]> handleShardCollect(CollectNode collectNode, RamAccountingContext ramAccountingContext) {
+    protected ListenableFuture<Bucket> handleShardCollect(CollectNode collectNode, RamAccountingContext ramAccountingContext) {
 
         String localNodeId = clusterService.localNode().id();
         final int numShards = collectNode.routing().numShards(localNodeId);
 
         collectNode = collectNode.normalize(nodeNormalizer);
-        ShardProjectorChain projectorChain = new ShardProjectorChain(numShards,
-                collectNode.projections(), projectorVisitor, ramAccountingContext);
 
-        final ShardCollectFuture result = getShardCollectFuture(numShards, projectorChain, collectNode);
+        SingleBucketBuilder bucketBuilder = new SingleBucketBuilder(getStreamers(collectNode.outputTypes()));
+        ShardProjectorChain projectorChain = new ShardProjectorChain(numShards,
+                collectNode.projections(), bucketBuilder, projectorVisitor, ramAccountingContext);
+
+        final ShardCollectFuture result = getShardCollectFuture(numShards, projectorChain, collectNode, bucketBuilder);
 
         if (collectNode.whereClause().noMatch()) {
             projectorChain.startProjections();
@@ -364,12 +376,23 @@ public class MapSideDataCollectOperation implements CollectOperation<Object[][]>
     /**
      * chose the right ShardCollectFuture for this class
      *
-     * @param numShards   number of shards until the result is considered complete
-     * @param projectorChain  the projector chain to process the collected rows
-     * @param collectNode in case any other properties need to be extracted
+     * @param numShards      number of shards until the result is considered complete
+     * @param projectorChain the projector chain to process the collected rows
+     * @param collectNode    in case any other properties need to be extracted
      * @return a fancy ShardCollectFuture implementation
      */
-    protected ShardCollectFuture getShardCollectFuture(int numShards, ShardProjectorChain projectorChain, CollectNode collectNode) {
-        return new SimpleShardCollectFuture(numShards, projectorChain);
+    protected ShardCollectFuture getShardCollectFuture(
+            int numShards, ShardProjectorChain projectorChain, CollectNode collectNode,
+            ResultProjectorType resultProvider) {
+        return new SimpleShardCollectFuture(numShards, projectorChain.result());
     }
+
+    protected static Streamer<?>[] getStreamers(List<DataType> types) {
+        Streamer<?>[] streamers = new Streamer<?>[types.size()];
+        for (int i = 0; i < streamers.length; i++) {
+            streamers[i] = types.get(i).streamer();
+        }
+        return streamers;
+    }
+
 }

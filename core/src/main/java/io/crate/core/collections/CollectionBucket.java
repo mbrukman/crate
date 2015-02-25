@@ -21,17 +21,48 @@
 
 package io.crate.core.collections;
 
-public interface Row {
+import com.google.common.base.Function;
+import com.google.common.collect.Iterators;
 
-    public abstract int size();
+import java.util.Collection;
+import java.util.Iterator;
 
-    /**
-     * Returns the element at the specified column
-     *
-     * @param index index of the column to return
-     * @return the value at the specified position in this list
-     * @throws IndexOutOfBoundsException if the index is out of range
-     *         (<tt>index &lt; 0 || index &gt;= size()</tt>)
-     */
-    public abstract Object get(int index);
+public class CollectionBucket implements Bucket {
+
+    private final Collection<Object[]> rows;
+
+    public CollectionBucket(Collection<Object[]> rows) {
+        this.rows = rows;
+    }
+
+    @Override
+    public int size() {
+        return rows.size();
+    }
+
+    @Override
+    public Iterator<Row> iterator() {
+        return Iterators.transform(rows.iterator(), new Function<Object[], Row>() {
+            Object[] current;
+
+            final Row row = new Row() {
+                @Override
+                public int size() {
+                    return current.length;
+                }
+
+                @Override
+                public Object get(int index) {
+                    return current[index];
+                }
+            };
+
+            @Override
+            public Row apply(Object[] input) {
+                current = input;
+                return row;
+            }
+        });
+    }
 }
+

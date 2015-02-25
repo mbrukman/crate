@@ -25,7 +25,9 @@ import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import io.crate.Constants;
-import io.crate.core.collections.ArrayIterator;
+import io.crate.core.collections.ArrayBucket;
+import io.crate.core.collections.Bucket;
+import io.crate.core.collections.Row;
 import io.crate.operation.Input;
 import io.crate.operation.ProjectorUpstream;
 import io.crate.operation.collect.CollectExpression;
@@ -34,22 +36,22 @@ import io.crate.operation.projectors.sorting.RowPriorityQueue;
 
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.Iterator;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class SortingTopNProjector implements Projector, ProjectorUpstream, ResultProvider {
+public class SortingTopNProjector implements ProjectorUpstream, ResultProvider {
 
     private final int offset;
     private final int maxSize;
     private final int numOutputs;
+
+    private Projector downstream;
 
     private RowPriorityQueue pq;
     private final Comparator[] comparators;
     private final Input<?>[] inputs;
     private final CollectExpression<?>[] collectExpressions;
     private final AtomicInteger remainingUpstreams = new AtomicInteger(0);
-    private final SettableFuture<Object[][]> result = SettableFuture.create();
+    private final SettableFuture<Bucket> result = SettableFuture.create();
 
     /**
      * @param inputs             contains output {@link io.crate.operation.Input}s and orderBy {@link io.crate.operation.Input}s
@@ -98,7 +100,7 @@ public class SortingTopNProjector implements Projector, ProjectorUpstream, Resul
     }
 
     @Override
-    public synchronized boolean setNextRow(Object... row) {
+    public synchronized boolean setNextRow(Row row) {
         Object[] evaluatedRow = evaluateRow(row);
         pq.insertWithOverflow(evaluatedRow);
         return true;
@@ -109,7 +111,7 @@ public class SortingTopNProjector implements Projector, ProjectorUpstream, Resul
         remainingUpstreams.incrementAndGet();
     }
 
-    private Object[] evaluateRow(Object[] row) {
+    private Object[] evaluateRow(Row row) {
         for (CollectExpression<?> collectExpression : collectExpressions) {
             collectExpression.setNextRow(row);
         }
@@ -137,34 +139,31 @@ public class SortingTopNProjector implements Projector, ProjectorUpstream, Resul
 
     private void generateResult() {
         final int resultSize = Math.max(pq.size() - offset, 0);
-        Object[][] rows = new Object[resultSize][];
+
+        if (downstream != null){
+            for (int i = resultSize - 1; i >= 0; i--) {
+                downstream.setNextRow(pq.pop())
+            }
+        } else {
+            Object[][] rows = new Object[resultSize][];
+
+        }
+
         for (int i = resultSize - 1; i >= 0; i--) {
             rows[i] = Arrays.copyOfRange(pq.pop(), 0, numOutputs); // strip order by inputs
         }
-        result.set(rows);
+        result.set(new ArrayBucket(rows));
         pq.clear();
     }
 
     @Override
-    public ListenableFuture<Object[][]> result() {
+    public ListenableFuture<Bucket> result() {
         return result;
     }
 
     @Override
-    public Iterator<Object[]> iterator() throws IllegalStateException {
-        if (!result.isDone()) {
-            throw new IllegalStateException("result not ready.");
-        }
-        try {
-            return new ArrayIterator(result.get(), 0, result.get().length);
-        } catch (InterruptedException | ExecutionException e) {
-            throw new IllegalStateException(e);
-        }
-    }
-
-    @Override
     public void downstream(Projector downstream) {
-        throw new UnsupportedOperationException(
-                "SortingTopNProjector is a ResultProvider. Doesn't support downstreams");
+        this.downstream = downstream;
+        downstream.registerUpstream(this);
     }
 }

@@ -27,6 +27,8 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.SettableFuture;
 import io.crate.Streamer;
 import io.crate.breaker.RamAccountingContext;
+import io.crate.core.collections.Bucket;
+import io.crate.executor.transport.StreamBucket;
 import io.crate.executor.transport.merge.NodeMergeResponse;
 import io.crate.metadata.Functions;
 import io.crate.operation.DownstreamOperationFactory;
@@ -36,13 +38,10 @@ import io.crate.planner.node.dql.MergeNode;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.common.io.stream.BytesStreamInput;
-import org.elasticsearch.common.io.stream.HandlesStreamInput;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
 
 import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
 import java.io.IOException;
 import java.util.*;
 
@@ -100,7 +99,7 @@ public class DistributedRequestContextManager {
                 new RamAccountingContext(ramAccountingContextId, circuitBreaker);
         statsTables.operationStarted(operationId, mergeNode.contextId(), mergeNode.id());
         PlanNodeStreamerVisitor.Context streamerContext = planNodeStreamerVisitor.process(mergeNode, ramAccountingContext);
-        SettableFuture<Object[][]> settableFuture = wrapActionListener(streamerContext.outputStreamers(), listener);
+        SettableFuture<Bucket> settableFuture = wrapActionListener(streamerContext.outputStreamers(), listener);
         DownstreamOperationContext downstreamOperationContext = new DownstreamOperationContext(
                 downstreamOperationFactory.create(mergeNode, ramAccountingContext),
                 settableFuture,
@@ -182,12 +181,12 @@ public class DistributedRequestContextManager {
         logger.trace("addToContext: finished");
     }
 
-    private SettableFuture<Object[][]> wrapActionListener(final Streamer<?>[] streamers,
+    private SettableFuture<Bucket> wrapActionListener(final Streamer<?>[] streamers,
                                                           final ActionListener<NodeMergeResponse> listener) {
-        SettableFuture<Object[][]> settableFuture = SettableFuture.create();
-        Futures.addCallback(settableFuture, new FutureCallback<Object[][]>() {
+        SettableFuture<Bucket> settableFuture = SettableFuture.create();
+        Futures.addCallback(settableFuture, new FutureCallback<Bucket>() {
             @Override
-            public void onSuccess(@Nullable Object[][] result) {
+            public void onSuccess(Bucket result) {
                 listener.onResponse(new NodeMergeResponse(streamers, result));
             }
 
@@ -218,19 +217,7 @@ public class DistributedRequestContextManager {
     }
 
     private void addFromBytesReference(BytesReference bytesReference, DownstreamOperationContext ctx) {
-        // bytesReference must be wrapped into HandlesStreamInput because it has a different readString()
-        // implementation than BytesStreamInput alone.
-        // and the memoryOutputStream originates from a HandlesStreamOutput.
-        HandlesStreamInput wrappedStream = new HandlesStreamInput(new BytesStreamInput(bytesReference));
-        Object[][] rows = null;
-        try {
-            rows = DistributedResultRequest.readRemaining(ctx.streamers(), wrappedStream);
-        } catch (IOException e) {
-            ctx.addFailure(e);
-            logger.error("unable to deserialize upstream result", e);
-            return;
-        }
-        assert rows != null;
+        StreamBucket rows = new StreamBucket(ctx.streamers(), bytesReference);
         ctx.add(rows);
     }
 

@@ -6,7 +6,7 @@
  * you may not use this file except in compliance with the License.  You may
  * obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -21,18 +21,21 @@
 
 package io.crate.operation.collect;
 
-import io.crate.core.collections.Row;
-import io.crate.operation.Input;
+import org.apache.lucene.util.BytesRef;
+import org.junit.Test;
 
-public abstract class CollectExpression<ReturnType> implements Input<ReturnType> {
+import static org.hamcrest.Matchers.is;
+import static org.junit.Assert.assertThat;
 
-    /**
-     * An expression which gets evaluated in the collect phase
-     */
+public class ModuloBucketingProjectorTest {
 
-    public void startCollect() {
+    @Test
+    public void testBytesRefHashing() throws Exception {
+
+        ModuloBucketingProjector moduloBucketingIterator =
+                new ModuloBucketingProjector(4, null);
+
+        int bucket = moduloBucketingIterator.getBucket(new Object[]{new BytesRef("foo")});
+        assertThat(bucket, is(2));
     }
-
-    public abstract boolean setNextRow(Row row);
 }
-

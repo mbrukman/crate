@@ -24,6 +24,7 @@ package io.crate.operation.projectors;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.ListenableFuture;
 import io.crate.breaker.RamAccountingContext;
+import io.crate.core.collections.Bucket;
 import io.crate.operation.ProjectorUpstream;
 import io.crate.planner.projection.Projection;
 
@@ -99,7 +100,7 @@ public class FlatProjectorChain {
         return firstProjector;
     }
 
-    public ListenableFuture<Object[][]> result() {
+    public ListenableFuture<Bucket> result() {
         return lastProjector().result();
     }
 }

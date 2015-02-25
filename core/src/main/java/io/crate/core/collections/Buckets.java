@@ -6,7 +6,7 @@
  * you may not use this file except in compliance with the License.  You may
  * obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -19,20 +19,20 @@
  * software solely pursuant to the terms of the relevant commercial agreement.
  */
 
-package io.crate.operation.collect;
+package io.crate.core.collections;
 
-import io.crate.core.collections.Row;
-import io.crate.operation.Input;
+public class Buckets {
 
-public abstract class CollectExpression<ReturnType> implements Input<ReturnType> {
-
-    /**
-     * An expression which gets evaluated in the collect phase
-     */
-
-    public void startCollect() {
+    public static Object[][] materialize(Bucket bucket){
+        Object[][] res = new Object[bucket.size()][];
+        int i = 0;
+        for (Row row : bucket) {
+            Object[] current = res[i++];
+            for (int j = 0; j < row.size(); j++) {
+                current[j] = row.get(i);
+            }
+        }
+        return res;
     }
 
-    public abstract boolean setNextRow(Row row);
 }
-

@@ -21,17 +21,53 @@
 
 package io.crate.core.collections;
 
-public interface Row {
+import java.util.Iterator;
 
-    public abstract int size();
+public class ArrayBucket implements Bucket {
 
-    /**
-     * Returns the element at the specified column
-     *
-     * @param index index of the column to return
-     * @return the value at the specified position in this list
-     * @throws IndexOutOfBoundsException if the index is out of range
-     *         (<tt>index &lt; 0 || index &gt;= size()</tt>)
-     */
-    public abstract Object get(int index);
+    private final Object[][] rows;
+
+    public ArrayBucket(Object[][] rows) {
+        this.rows = rows;
+    }
+
+    @Override
+    public int size() {
+        return rows.length;
+    }
+
+    @Override
+    public Iterator<Row> iterator() {
+        return new Iterator<Row>() {
+            int pos = 0;
+            Object[] current;
+            final Row row = new Row() {
+                @Override
+                public int size() {
+                    return current.length;
+                }
+
+                @Override
+                public Object get(int index) {
+                    return current[index];
+                }
+            };
+
+            @Override
+            public boolean hasNext() {
+                return pos < rows.length;
+            }
+
+            @Override
+            public Row next() {
+                current = rows[pos++];
+                return row;
+            }
+
+            @Override
+            public void remove() {
+
+            }
+        };
+    }
 }

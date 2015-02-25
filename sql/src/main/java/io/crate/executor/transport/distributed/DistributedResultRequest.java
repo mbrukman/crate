@@ -21,9 +21,9 @@
 
 package io.crate.executor.transport.distributed;
 
-import com.google.common.base.Optional;
 import io.crate.Streamer;
-import org.elasticsearch.common.io.Streams;
+import io.crate.core.collections.Bucket;
+import io.crate.executor.transport.StreamBucket;
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -36,7 +36,7 @@ public class DistributedResultRequest extends TransportRequest {
 
     private DistributedRequestContextManager contextManager;
     private Streamer<?>[] streamers;
-    private Object[][] rows;
+    private Bucket rows;
     private UUID contextId;
     private BytesStreamOutput memoryStream;
 
@@ -61,11 +61,11 @@ public class DistributedResultRequest extends TransportRequest {
         return memoryStream;
     }
 
-    public Object[][] rows() {
+    public Bucket rows() {
         return rows;
     }
 
-    public void rows(Object[][] rows) {
+    public void rows(Bucket rows) {
         this.rows = rows;
     }
 
@@ -77,41 +77,11 @@ public class DistributedResultRequest extends TransportRequest {
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
         contextId = new UUID(in.readLong(), in.readLong());
-
         if (in.readBoolean()) {
-            failure= true;
+            failure = true;
             return;
         }
-
-        final Optional<Streamer<?>[]> optStreamer = contextManager.getStreamer(contextId);
-        if (optStreamer.isPresent()) {
-            final Streamer<?>[] streamers = optStreamer.get();
-            final int numColumns = streamers.length;
-
-            rows = new Object[in.readVInt()][];
-            for (int r = 0; r < rows.length; r++) {
-                rows[r] = new Object[numColumns];
-                for (int c = 0; c < numColumns; c++) {
-                    rows[r][c] = streamers[c].readValueFrom(in);
-                }
-            }
-        } else {
-            memoryStream = new BytesStreamOutput();
-            Streams.copy(in, memoryStream);
-        }
-    }
-
-    public static Object[][] readRemaining(Streamer<?>[] streamers, StreamInput input) throws IOException {
-        final int numColumns = streamers.length;
-        final Object[][] rows = new Object[input.readVInt()][];
-        for (int r = 0; r < rows.length; r++) {
-            rows[r] = new Object[numColumns];
-            for (int c = 0; c < numColumns; c++) {
-                rows[r][c] = streamers[c].readValueFrom(input);
-            }
-        }
-
-        return rows;
+        rows = new StreamBucket(in);
     }
 
     @Override
@@ -119,22 +89,14 @@ public class DistributedResultRequest extends TransportRequest {
         super.writeTo(out);
         out.writeLong(contextId.getMostSignificantBits());
         out.writeLong(contextId.getLeastSignificantBits());
-
         if (failure) {
             out.writeBoolean(true);
             return;
         }
         out.writeBoolean(false);
 
-        assert streamers != null;
-        final int numColumns = streamers.length;
-
-        out.writeVInt(rows.length);
-        for (Object[] row : rows) {
-            for (int i = 0; i < numColumns; i++) {
-                streamers[i].writeValueTo(out, row[i]);
-            }
-        }
+        // TODO: we should not rely on another bucket in this class and instead write to the stream directly
+        StreamBucket.writeBucket(out, streamers, rows);
     }
 
     public void failure(boolean failure) {

@@ -22,17 +22,15 @@
 package io.crate.operation.collect;
 
 import io.crate.core.collections.Row;
-import io.crate.operation.Input;
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.StringHelper;
 
-public abstract class CollectExpression<ReturnType> implements Input<ReturnType> {
+import javax.annotation.Nullable;
 
-    /**
-     * An expression which gets evaluated in the collect phase
-     */
+public class ModuloBucketingProjector extends BucketingProjector {
 
-    public void startCollect() {
+    public ModuloBucketingProjector(int numBuckets, Iterable<Row> bucket) {
+        super(numBuckets, bucket);
     }
 
-    public abstract boolean setNextRow(Row row);
 }
-

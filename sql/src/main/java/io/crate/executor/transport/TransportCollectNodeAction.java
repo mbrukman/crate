@@ -28,6 +28,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import io.crate.Streamer;
 import io.crate.breaker.CrateCircuitBreakerService;
 import io.crate.breaker.RamAccountingContext;
+import io.crate.core.collections.Bucket;
 import io.crate.exceptions.Exceptions;
 import io.crate.operation.collect.DistributingCollectOperation;
 import io.crate.operation.collect.MapSideDataCollectOperation;
@@ -97,7 +98,7 @@ public class TransportCollectNodeAction {
     private void nodeOperation(final NodeCollectRequest request,
                                final ActionListener<NodeCollectResponse> collectResponse) {
         final CollectNode node = request.collectNode();
-        final ListenableFuture<Object[][]> collectResult;
+        final ListenableFuture<Bucket> collectResult;
 
         final UUID operationId;
         if (node.jobId().isPresent()) {
@@ -125,9 +126,9 @@ public class TransportCollectNodeAction {
             return;
         }
 
-        Futures.addCallback(collectResult, new FutureCallback<Object[][]>() {
+        Futures.addCallback(collectResult, new FutureCallback<Bucket>() {
             @Override
-            public void onSuccess(@Nullable Object[][] result) {
+            public void onSuccess(@Nullable Bucket result) {
                 assert result != null;
                 NodeCollectResponse response = new NodeCollectResponse(
                         planNodeStreamerVisitor.process(node, ramAccountingContext).outputStreamers());

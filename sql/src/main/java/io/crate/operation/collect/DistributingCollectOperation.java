@@ -30,6 +30,8 @@ import com.google.common.util.concurrent.ListenableFuture;
 import io.crate.Streamer;
 import io.crate.breaker.CrateCircuitBreakerService;
 import io.crate.breaker.RamAccountingContext;
+import io.crate.core.collections.Bucket;
+import io.crate.core.collections.Row;
 import io.crate.executor.TaskResult;
 import io.crate.executor.transport.TransportActionProvider;
 import io.crate.executor.transport.distributed.DistributedFailureRequest;
@@ -38,9 +40,9 @@ import io.crate.executor.transport.distributed.DistributedResultResponse;
 import io.crate.executor.transport.merge.TransportMergeNodeAction;
 import io.crate.metadata.Functions;
 import io.crate.metadata.ReferenceResolver;
-import io.crate.operation.projectors.ResultProvider;
 import io.crate.planner.node.PlanNodeStreamerVisitor;
 import io.crate.planner.node.dql.CollectNode;
+import io.crate.types.DataType;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
@@ -59,7 +61,6 @@ import org.elasticsearch.transport.TransportService;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -80,15 +81,17 @@ public class DistributingCollectOperation extends MapSideDataCollectOperation {
         private final List<DiscoveryNode> downStreams;
         private final int numDownStreams;
         private final UUID jobId;
+        private Iterable<Row> upstreamResult;
 
 
         public DistributingShardCollectFuture(UUID jobId,
                                               int numShards,
-                                              ResultProvider resultProvider,
+                                              Iterable<Row> upstreamResult,
                                               List<DiscoveryNode> downStreams,
                                               TransportService transportService,
                                               Streamer<?>[] streamers) {
-            super(numShards, resultProvider);
+            super(numShards);
+            this.upstreamResult = upstreamResult;
             Preconditions.checkNotNull(downStreams, "downstream nodes is null");
             Preconditions.checkNotNull(jobId, "jobId is null");
             this.jobId = jobId;
@@ -97,7 +100,7 @@ public class DistributingCollectOperation extends MapSideDataCollectOperation {
             this.numDownStreams = this.downStreams.size();
 
             this.requests = new DistributedResultRequest[numDownStreams];
-            for (int i=0, length = this.downStreams.size(); i<length; i++) {
+            for (int i = 0, length = this.downStreams.size(); i < length; i++) {
                 this.requests[i] = new DistributedResultRequest(jobId, streamers);
             }
         }
@@ -112,14 +115,14 @@ public class DistributingCollectOperation extends MapSideDataCollectOperation {
             }
             super.set(TaskResult.EMPTY_RESULT.rows());
 
-            BucketingIterator bucketingIterator = new ModuloBucketingIterator(
+            BucketingProjector bucketingProjector = new ModuloBucketingProjector(
                     this.numDownStreams,
-                    resultProvider
+                    upstreamResult
             );
 
             // send requests
             int i = 0;
-            for (List<Object[]> bucket : bucketingIterator) {
+            for (List<Object[]> bucket : bucketingProjector) {
                 DistributedResultRequest request = this.requests[i];
                 request.rows(bucket.toArray(new Object[bucket.size()][]));
                 final DiscoveryNode node = downStreams.get(i);
@@ -144,41 +147,41 @@ public class DistributingCollectOperation extends MapSideDataCollectOperation {
 
         private void sendRequest(final DistributedResultRequest request, final DiscoveryNode node) {
             transportService.submitRequest(
-                node,
-                TransportMergeNodeAction.mergeRowsAction, // NOTICE: hard coded transport action, should be delivered by collectNode
-                request,
-                new BaseTransportResponseHandler<DistributedResultResponse>() {
-                    @Override
-                    public DistributedResultResponse newInstance() {
-                        return new DistributedResultResponse();
-                    }
+                    node,
+                    TransportMergeNodeAction.mergeRowsAction, // NOTICE: hard coded transport action, should be delivered by collectNode
+                    request,
+                    new BaseTransportResponseHandler<DistributedResultResponse>() {
+                        @Override
+                        public DistributedResultResponse newInstance() {
+                            return new DistributedResultResponse();
+                        }
 
-                    @Override
-                    public void handleResponse(DistributedResultResponse response) {
-                        if (logger.isTraceEnabled()) {
-                            logger.trace("[{}] successfully sent distributing collect request to {}",
-                                    jobId.toString(),
-                                    node.id());
+                        @Override
+                        public void handleResponse(DistributedResultResponse response) {
+                            if (logger.isTraceEnabled()) {
+                                logger.trace("[{}] successfully sent distributing collect request to {}",
+                                        jobId.toString(),
+                                        node.id());
+                            }
+                        }
+
+                        @Override
+                        public void handleException(TransportException exp) {
+                            Throwable cause = exp.getCause();
+                            if (cause instanceof EsRejectedExecutionException) {
+                                sendFailure(request.contextId(), node);
+                            } else {
+                                logger.error("[{}] Exception sending distributing collect request to {}",
+                                        exp, jobId, node.id());
+                                setException(cause);
+                            }
+                        }
+
+                        @Override
+                        public String executor() {
+                            return ThreadPool.Names.SAME;
                         }
                     }
-
-                    @Override
-                    public void handleException(TransportException exp) {
-                        Throwable cause = exp.getCause();
-                        if (cause instanceof EsRejectedExecutionException) {
-                            sendFailure(request.contextId(), node);
-                        } else {
-                            logger.error("[{}] Exception sending distributing collect request to {}",
-                                    exp, jobId, node.id());
-                            setException(cause);
-                        }
-                    }
-
-                    @Override
-                    public String executor() {
-                        return ThreadPool.Names.SAME;
-                    }
-                }
             );
         }
 
@@ -216,7 +219,7 @@ public class DistributingCollectOperation extends MapSideDataCollectOperation {
     private static List<DistributedResultRequest> genRequests(UUID jobId, int size, Streamer<?>[] streamers) {
         List<DistributedResultRequest> requests = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
-            requests.add(new DistributedResultRequest(jobId,streamers ));
+            requests.add(new DistributedResultRequest(jobId, streamers));
         }
         return requests;
     }
@@ -246,10 +249,10 @@ public class DistributingCollectOperation extends MapSideDataCollectOperation {
     }
 
     @Override
-    protected ListenableFuture<Object[][]> handleNodeCollect(CollectNode collectNode, RamAccountingContext ramAccountingContext) {
+    protected ListenableFuture<Bucket> handleNodeCollect(CollectNode collectNode, RamAccountingContext ramAccountingContext) {
         assert collectNode.jobId().isPresent();
         assert collectNode.hasDownstreams() : "distributing collect without downStreams";
-        ListenableFuture<Object[][]> future = super.handleNodeCollect(collectNode, ramAccountingContext);
+        ListenableFuture<Bucket> future = super.handleNodeCollect(collectNode, ramAccountingContext);
 
         final List<DiscoveryNode> downStreams = toDiscoveryNodes(collectNode.downStreamNodes());
         final List<DistributedResultRequest> requests = genRequests(
@@ -262,18 +265,21 @@ public class DistributingCollectOperation extends MapSideDataCollectOperation {
     }
 
     private void sendRequestsOnFinish(
-            ListenableFuture<Object[][]> future,
+            ListenableFuture<Bucket> future,
             final List<DiscoveryNode> downStreams,
             final List<DistributedResultRequest> requests) {
-        Futures.addCallback(future, new FutureCallback<Object[][]>() {
+        Futures.addCallback(future, new FutureCallback<Bucket>() {
             @Override
-            public void onSuccess(@Nullable Object[][] result) {
+            public void onSuccess(Bucket result) {
                 assert result != null;
-                BucketingIterator bucketingIterator = new ModuloBucketingIterator(
-                        downStreams.size(), Arrays.asList(result));
+
+
+
+                BucketingProjector bucketingProjector = new ModuloBucketingProjector(
+                        downStreams.size(), result);
 
                 int i = 0;
-                for (List<Object[]> bucket : bucketingIterator) {
+                for (List<Object[]> bucket : bucketingProjector) {
                     DistributedResultRequest request = requests.get(i);
                     request.rows(bucket.toArray(new Object[bucket.size()][]));
                     sendRequest(request, downStreams.get(i));
@@ -333,16 +339,18 @@ public class DistributingCollectOperation extends MapSideDataCollectOperation {
     }
 
     @Override
-    protected ListenableFuture<Object[][]> handleShardCollect(CollectNode collectNode, RamAccountingContext ramAccountingContext) {
+    protected ListenableFuture<Bucket> handleShardCollect(CollectNode collectNode, RamAccountingContext ramAccountingContext) {
         assert collectNode.hasDownstreams() : "no downstreams";
         return super.handleShardCollect(collectNode, ramAccountingContext);
     }
-
     @Override
     protected ShardCollectFuture getShardCollectFuture(
             int numShards, ShardProjectorChain projectorChain, CollectNode collectNode) {
         assert collectNode.jobId().isPresent();
         PlanNodeStreamerVisitor.Context streamerContext = new PlanNodeStreamerVisitor.Context(null);
+
+
+        streamers = Lists.transform() DataType.STREAMER_FUNCTION
         streamerVisitor.process(collectNode, streamerContext);
         Streamer<?>[] streamers = streamerVisitor.process(
                 collectNode, new RamAccountingContext("dummy", circuitBreaker)).outputStreamers();
