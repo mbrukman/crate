@@ -38,7 +38,7 @@ import java.util.Iterator;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class SortingTopNProjector implements Projector, ProjectorUpstream, ResultProvider {
+public class SortingTopNProjector implements Projector, ResultProvider {
 
     private final int offset;
     private final int maxSize;
@@ -160,11 +160,5 @@ public class SortingTopNProjector implements Projector, ProjectorUpstream, Resul
         } catch (InterruptedException | ExecutionException e) {
             throw new IllegalStateException(e);
         }
-    }
-
-    @Override
-    public void downstream(Projector downstream) {
-        throw new UnsupportedOperationException(
-                "SortingTopNProjector is a ResultProvider. Doesn't support downstreams");
     }
 }
