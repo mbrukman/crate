@@ -25,6 +25,7 @@ import io.crate.planner.symbol.Function;
 import io.crate.planner.symbol.Symbol;
 import io.crate.planner.symbol.SymbolVisitor;
 
+import java.util.Arrays;
 import java.util.List;
 
 public class OrderBy {
@@ -72,6 +73,14 @@ public class OrderBy {
             }
         }
         return false;
+    }
+
+    public static OrderBy fromSymbols(List<Symbol> symbols) {
+        boolean[] reverseFlags = new boolean[symbols.size()];
+        Arrays.fill(reverseFlags, false);
+        Boolean[] nullsFirst = new Boolean[symbols.size()];
+        Arrays.fill(nullsFirst, null);
+        return new OrderBy(symbols, reverseFlags, nullsFirst);
     }
 
     private static class SortSymbolContext {

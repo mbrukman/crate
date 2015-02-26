@@ -122,7 +122,13 @@ public class DistributedGroupByConsumer implements Consumer {
             if( table.querySpec().limit() != null && !table.querySpec().hasAggregates() ) {
                 collectorLimit = table.querySpec().offset() + table.querySpec().limit();
             }
-            OrderBy collectOrderBy = orderBy != null && orderBy.hasFunction() ? null : orderBy;
+            boolean isRootRelation = context.consumerContext.rootRelation() == table;
+            OrderBy collectOrderBy = orderBy;
+            if(collectOrderBy == null && isRootRelation) {
+                // No orderBy given, order by groupKeys
+                collectOrderBy = OrderBy.fromSymbols(table.querySpec().groupBy());
+            }
+            collectOrderBy = collectOrderBy != null && collectOrderBy.hasFunction() ? null : collectOrderBy;
             CollectNode collectNode = PlanNodeBuilder.distributingCollect(
                     tableInfo,
                     table.querySpec().where(),
@@ -160,7 +166,6 @@ public class DistributedGroupByConsumer implements Consumer {
                 }
             }
 
-            boolean isRootRelation = context.consumerContext.rootRelation() == table;
             if (isRootRelation) {
                 reducerProjections.add(projectionBuilder.topNProjection(
                         collectOutputs,

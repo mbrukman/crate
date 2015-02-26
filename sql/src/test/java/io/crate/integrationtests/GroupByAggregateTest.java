@@ -21,7 +21,6 @@
 
 package io.crate.integrationtests;
 
-import io.crate.Constants;
 import io.crate.action.sql.SQLActionException;
 import io.crate.action.sql.SQLResponse;
 import io.crate.test.integration.CrateIntegrationTest;
@@ -32,12 +31,9 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 
-import java.util.HashMap;
-
-import static org.hamcrest.CoreMatchers.anyOf;
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.CoreMatchers.nullValue;
-import static org.hamcrest.Matchers.*;
+import static org.hamcrest.CoreMatchers.*;
+import static org.hamcrest.Matchers.closeTo;
+import static org.hamcrest.Matchers.isIn;
 
 @CrateIntegrationTest.ClusterScope(scope = CrateIntegrationTest.Scope.GLOBAL)
 public class GroupByAggregateTest extends SQLTransportIntegrationTest {
@@ -806,24 +802,11 @@ public class GroupByAggregateTest extends SQLTransportIntegrationTest {
 
     @Test
     public void testGroupByMultiValueField() throws Exception {
-        this.setup.groupBySetup();
-        // inserting multiple values not supported anymore
-        client().prepareIndex("characters", Constants.DEFAULT_MAPPING_TYPE).setSource(new HashMap<String, Object>() {{
-            put("race", new String[]{"Android"});
-            put("gender", new String[]{"male", "robot"});
-            put("name", "Marvin2");
-        }}).execute().actionGet();
-        client().prepareIndex("characters", Constants.DEFAULT_MAPPING_TYPE).setSource(new HashMap<String, Object>() {{
-            put("race", new String[]{"Android"});
-            put("gender", new String[]{"male", "robot"});
-            put("name", "Marvin3");
-        }}).execute().actionGet();
-        execute("refresh table characters");
-
+        execute("create table array_table(foo array(string))");
+        ensureGreen();
         expectedException.expect(SQLActionException.class);
-        expectedException.expectMessage("Column \"gender\" has a value that is an array. Group by doesn't work on Arrays");
-
-        execute("select gender from characters group by gender");
+        expectedException.expectMessage("Cannot GROUP BY 'foo': invalid data type 'string_array'");
+        execute("select foo from array_table group by foo");
     }
 
     @Test

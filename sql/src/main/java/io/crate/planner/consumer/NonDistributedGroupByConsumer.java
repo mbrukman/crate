@@ -149,7 +149,12 @@ public class NonDistributedGroupByConsumer implements Consumer {
             if( table.querySpec().limit() != null && !table.querySpec().hasAggregates() ) {
                 collectorLimit = table.querySpec().offset() + table.querySpec().limit();
             }
-            OrderBy collectOrderBy = orderBy != null && orderBy.hasFunction() ? null : orderBy;
+            OrderBy collectOrderBy = orderBy;
+            if(collectOrderBy == null && context.consumerContext.rootRelation() == table) {
+                // No orderBy given, order by groupKeys
+                collectOrderBy = OrderBy.fromSymbols(table.querySpec().groupBy());
+            }
+            collectOrderBy = collectOrderBy != null && collectOrderBy.hasFunction() ? null : collectOrderBy;
             CollectNode collectNode = PlanNodeBuilder.collect(
                     tableInfo,
                     table.querySpec().where(),
